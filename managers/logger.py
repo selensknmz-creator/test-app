@@ -3,6 +3,7 @@ import os
 import threading
 import time
 import requests
+import re
 from queue import Queue, Empty
 
 # =========================
@@ -11,13 +12,8 @@ from queue import Queue, Empty
 BOT_TOKEN = os.getenv("LOGGER_BOT_TKN")
 CHAT_ID = os.getenv("LOGGER_CHAT_ID")
 
-print("🔑 BOT_TOKEN:", BOT_TOKEN)
-print("💬 CHAT_ID:", CHAT_ID)
-
 if not BOT_TOKEN or not CHAT_ID:
-    print("❌ ERROR: ENV variables missing!")
-    print("Set LOGGER_BOT_TKN and LOGGER_CHAT_ID")
-    
+    print("❌ ERROR: LOGGER_BOT_TKN or LOGGER_CHAT_ID missing!")
 
 # =========================
 # 🎨 LEVEL EMOJIS
@@ -31,12 +27,19 @@ LEVEL_EMOJI = {
 }
 
 # =========================
+# 🧹 ANSI CLEANER (FIX FLASK LOGS)
+# =========================
+ANSI_ESCAPE = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
+
+def clean_log(text):
+    return ANSI_ESCAPE.sub('', text)
+
+# =========================
 # 📦 QUEUE CONFIG
 # =========================
 log_queue = Queue()
 BATCH_SIZE = 5
 FLUSH_INTERVAL = 3  # seconds
-
 
 # =========================
 # 📤 TELEGRAM SEND
@@ -55,30 +58,23 @@ def send_to_telegram(text, use_markdown=True):
 
         res = requests.post(url, data=data, timeout=5)
 
-        print("📨 Telegram response:", res.text)
-
-        # fallback if markdown fails
+        # Markdown fail → retry plain text
         if not res.ok and use_markdown:
-            print("⚠️ Markdown failed, retrying without markdown...")
             return send_to_telegram(text, use_markdown=False)
 
     except Exception as e:
         print("❌ Telegram send error:", e)
 
-
 # =========================
 # 🔁 WORKER THREAD
 # =========================
 def telegram_worker():
-    print("🚀 Telegram worker started")
-
     buffer = []
     last_flush = time.time()
 
     while True:
         try:
             log = log_queue.get(timeout=1)
-            print("📥 Got log from queue")
             buffer.append(log)
         except Empty:
             pass
@@ -86,13 +82,11 @@ def telegram_worker():
         now = time.time()
 
         if buffer and (len(buffer) >= BATCH_SIZE or now - last_flush >= FLUSH_INTERVAL):
-            print(f"📤 Sending batch ({len(buffer)} logs)")
             text = "\n\n".join(buffer)
             send_to_telegram(text)
 
             buffer.clear()
             last_flush = now
-
 
 # =========================
 # 🧠 CUSTOM HANDLER
@@ -103,7 +97,7 @@ class TelegramBatchHandler(logging.Handler):
             level = record.levelname
             emoji = LEVEL_EMOJI.get(level, "⚪")
 
-            log_entry = self.format(record)
+            log_entry = clean_log(self.format(record))
 
             formatted = (
                 f"{emoji} *{level}*\n"
@@ -111,12 +105,10 @@ class TelegramBatchHandler(logging.Handler):
                 f"{log_entry}"
             )
 
-            print("📥 Adding log to queue")
             log_queue.put(formatted)
 
         except Exception as e:
             print("❌ Handler error:", e)
-
 
 # =========================
 # 🚀 SETUP LOGGER
@@ -129,25 +121,24 @@ def setup_telegram_logger():
         "%(asctime)s\n%(message)s"
     )
 
-    # Console
+    # Console handler
     console = logging.StreamHandler()
     console.setFormatter(formatter)
     logger.addHandler(console)
 
-    # Telegram
+    # Telegram handler
     tg_handler = TelegramBatchHandler()
     tg_handler.setFormatter(formatter)
     logger.addHandler(tg_handler)
 
-    # Start worker
+    # Reduce Flask/Werkzeug spam logs
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
+    # Start worker thread
     t = threading.Thread(target=telegram_worker, daemon=True)
     t.start()
 
-    # =========================
-    # 🧪 TEST MESSAGE
-    # =========================
-    print("🧪 Sending test message...")
-
-    send_to_telegram("✅ Logger Started Successfully 🚀")
+    # Test message
+    send_to_telegram("✅ *Logger Started Successfully* 🚀")
 
     logging.info("Logger initialized ✅")
