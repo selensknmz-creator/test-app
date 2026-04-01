@@ -2,7 +2,7 @@ from config import config
 from managers.logger import setup_telegram_logger
 setup_telegram_logger()
 import logging
-from webApp.flask_srvr import run_thread
+from webApp.flask_srvr import run_flask
 from managers.thread_manager import start_thread
 import time
 
