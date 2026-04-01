@@ -6,7 +6,7 @@ from webApp.flask_srvr import run_flask
 from managers.thread_manager import start_thread
 import time
 
-run_thread(run_flask, name="FlaskServer")
+start_thread(run_flask, name="FlaskServer")
 
 logging.info(config.id)
 
